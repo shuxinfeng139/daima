@@ -1,0 +1,174 @@
+clc
+clear
+tic;
+t1=1;
+tt1=1;
+TT=723;   %input('TT燃气功率:');%输入燃气功率
+mm=2700;   %input('mmpv:');%输入pv额定功率
+ba=3700;  %input('ba:');157
+ce=4092;  %input('tst');225
+V_Gb=4268;  %619yeke
+V_ac=2480.2;
+V_ec=1730;
+V_Pebuy=1758.7; %
+V_Pesell=1662.5;%卖电量不符794.7
+Ebattery_in=ba*0.2;
+Ebattery_out=ba*0.2;
+Qhst_in=ce*0.2;
+Qhst_out=ce*0.2;
+COP_ec=4.0;  %4
+COP_ac=0.7;  %0.7
+r_b=0.85;%锅炉热效率  0.85
+r_mt=0.3;%燃气轮机效率
+r_loss=0.2;%热损失效率
+r_hr=0.8;  %热回收装置效率  0.8
+r_he=0.8;  %换热器效率
+r_bt_c=0.95;
+r_bt_disc=0.95;
+r_tst_c=0.9;
+r_tst_disc=0.9;
+r_bt=0.001;
+r_tst=0.005;
+R_ng=3.24;   %$/m3 天然气价格3.24元立方米
+H_ng=9.78;  %kwh/m3  天然气低热值
+K_om_mt=0.16848;  %￥/kwh单位出力维护成本  0.026$/kwh   汇率6.48   0.01674￥/kwh  luozhaow文献
+K_om_qmt=0.01674; %余热回收设备维护成本 % 博士
+K_om_b=0.017496;   %￥/kwh  0.0027$/kwh   0.01674 ￥/kwh
+K_om_ac=0.015552;   %￥/kwh  0.0024$/kwh  0.0062￥/kwh
+K_om_he=0.00648;    %￥/kwh  0.001$/kwh   0.01674￥/kwh
+K_om_ec=0.010368;   %￥/kwh    0.0016$/kwh   0.0093￥/kwh
+K_om_pv=0.013284;   %￥/kwh  0.00205$/kwh  0.013284 0.124￥/kwh
+K_om_tst=0.020088;%￥   0.0031$$   0.0013￥/kwh
+K_om_bt=0.0068688;  %￥  0.00106$
+a=load('E:\Users\15033\Desktop\程序-线性规划\程序-陶鸿俊\程序\riqianxia.txt');
+n=length(a);
+Lc=-a(:,1)';
+Lh=a(:,2)';
+Le=a(:,3)';
+P=a(:,4)';
+S=a(:,5)';
+DA_PV=a(:,6)';%输入参数
+NOTC=47;
+%%%%%%%%%%创建变量%%%%%%%%%
+P_mt=sdpvar(1,n,'full');    %燃气轮机日前出力  实数变量sdpvar   设置1*24，非对称的实数变量full,默认是对称的
+P_bt_disc=sdpvar(1,n,'full');
+P_bt_c=sdpvar(1,n,'full');
+P_tst_disc=sdpvar(1,n,'full');
+P_tst_c=sdpvar(1,n,'full');
+P_b=sdpvar(1,n,'full');        %燃气锅炉日前出力
+P_ec=sdpvar(1,n,'full');       %电制冷机日前出力
+P_ac=sdpvar(1,n,'full');       %吸收式制冷机日前出力
+P_ebuy=sdpvar(1,n,'full');     %日前购电量
+P_esell=sdpvar(1,n,'full');    %日前售电量
+flag_ebuy=binvar(1,n,'full');  %购电信号
+flag_esell=binvar(1,n,'full'); %售电信号       0-1变量binvar   整数变量intvar
+Umt=binvar(1,n,'full');
+U_bt_disc=binvar(1,n+1,'full');
+U_bt_c=binvar(1,n+1,'full');
+U_tst_disc=binvar(1,n,'full');
+U_tst_c=binvar(1,n,'full');
+U_gb_c=binvar(1,n,'full');
+U_bt_disc1=binvar(1,n,'full');
+U_bt_c1=binvar(1,n,'full');
+W_bt=sdpvar(1,n+1,'full');  %储能设备容量状态约束
+W_tst=sdpvar(1,n+1,'full');
+
+%%%%添加约束条件%%%%%%%由实际设定
+Constraints = [];%定义一个存储约束条件的矩阵
+A_various=[];
+%功率平衡约束
+
+for k =1:n
+    Constraints=[Constraints, DA_PV(1,k)+P_mt(1,k)+P_ebuy(1,k)+P_bt_disc(1,k)== Le(1,k)+P_ec(1,k)+P_bt_c(1,k)+P_esell(1,k)];                    %电功率平衡约束
+    Constraints=[Constraints,(P_mt(1,k)*(1-r_mt-r_loss)*r_hr)/r_mt+P_b(1,k)+P_tst_disc(1,k) == Lh(1,k)/r_he+P_ac(1,k)+P_tst_c(1,k)]; % 热功率平衡
+    Constraints=[Constraints,P_ec(1,k)*COP_ec+P_ac(1,k)*COP_ac == Lc(1,k)];                                                    %冷功率平衡约束
+end
+for k =1:n
+    Constraints=[Constraints,20*Umt(1,k)<=P_mt(1,k)<=TT*Umt(1,k),0<=P_b(1,k)<=V_Gb*U_gb_c(1,k),0<=P_ec(1,k)<=V_ec,0<=P_ac(1,k)<=V_ac];%设备出力约束
+    Constraints=[Constraints,0<=P_ebuy(1,k)<=V_Pebuy*flag_ebuy(1,k), 0<=P_esell(1,k)<=V_Pesell*flag_esell(1,k),0<=P_bt_c(1,k)<=U_bt_c(1,k)*Ebattery_in,...
+        0<=P_bt_disc(1,k)<=U_bt_disc(1,k)*Ebattery_out,0<=P_tst_disc(1,k)<=U_tst_disc(1,k)*Qhst_out,0<=P_tst_c(1,k)<=U_tst_c(1,k)*Qhst_in];                                                          %购售能约束
+    Constraints=[Constraints,flag_ebuy(1,k)+flag_esell(1,k)<=1,U_tst_disc(1,k)+U_tst_c(1,k)<=1,U_bt_c(1,k)+U_bt_disc(1,k)<=1,Umt(1,k)<=1,U_gb_c(1,k)<=1,...
+        U_bt_c(1,k+1)-U_bt_c(1,k)<=U_bt_c1(1,k),U_bt_disc(1,k+1)-U_bt_disc(1,k)<=U_bt_disc1(1,k)];
+end
+
+for k=1:n %电池状态约束
+    W_bt(1,1)=0.6*ba;W_tst(1,1)=0.6*ce;
+    W_bt(1,k+1)=W_bt(1,k)-W_bt(1,k)*r_bt*t1+(r_bt_c*P_bt_c(1,k)-P_bt_disc(1,k)/r_bt_disc)*t1;
+    W_tst(1,k+1)=W_tst(1,k)-W_tst(1,k)*r_tst*t1+(r_tst_c*P_tst_c(1,k)-P_tst_disc(1,k)/r_tst_disc)*t1;  %转化为t1时段损失的能量   W_tst(1,k)*r_tst一小时的损失能量----  储能损失功率转化到15min
+    Constraints=[Constraints,0.2*ba<=W_bt(1,k+1)<=ba,0.2*ce<=W_tst(1,k+1)<=ce];
+    %Constraints=[Constraints,W_bt(1,n+1)==0.6*ba,W_tst(1,n+1)==0.6*ce];
+end
+for k=2:n
+    Constraints=[Constraints,-200*Umt(1,k)<=P_mt(1,k)-P_mt(1,k-1)<=200*Umt(1,k)];
+   Constraints=[Constraints,-150<=P_bt_c(1,k)-P_bt_c(1,k-1)<=150,-150<=P_bt_disc(1,k)-P_bt_disc(1,k-1)<=150];
+end
+%%日内优化目标函数包括耗能费用+设备出力运行维护费用+储能装置惩罚费用（）+设备功率调整惩罚项+huanjing
+for k =1:n
+    x(1,k)=(P_mt(1,k)*(1-r_mt-r_loss)*r_hr)/r_mt;
+    C_bt(1,k)=(P_bt_c(1,k)+P_bt_disc(1,k))*K_om_bt*t1;
+    C_tst(1,k)=(P_tst_c(1,k)+P_tst_disc(1,k))*K_om_tst*t1;
+    C_ng(1,k)=(R_ng*(P_mt(1,k)/r_mt+P_b(1,k)/r_b)/H_ng)*t1;
+    C_om(1,k)=(P_mt(1,k)*K_om_mt+ x(1,k)*K_om_qmt+P_b(1,k)*K_om_b+Lh(1,k)/r_he*K_om_he+P_ac(1,k)*K_om_ac+P_ec(1,k)*K_om_ec+ DA_PV(1,k)*K_om_pv+(P_bt_c(1,k)+P_bt_disc(1,k))*K_om_bt...
+        +(P_tst_c(1,k)+P_tst_disc(1,k))*K_om_tst)*t1+(U_bt_disc1(1,k)+U_bt_c1(1,k))*18;%
+    C_g(1,k)=(P_ebuy(1,k)*P(1,k)-P_esell(1,k)*S(1,k))*t1;
+   E_om(1,k)=((P_ebuy(1,k))*889.1+((P_mt(1,k))/r_mt+(P_b(1,k))/r_b)*184.082)*t1*0.000033+((P_ebuy(1,k))*3.12+((P_mt(1,k))/r_mt+(P_b(1,k))/r_b)*0.0009)*0.007*tt1...
+                +((P_ebuy(1,k))*2.35+((P_mt(1,k))/r_mt+(P_b(1,k))/r_b)*0.619)*t1*0.009;
+    money(1,k)=C_ng(1,k)+ C_om(1,k)+ C_g(1,k)+E_om(1,k);
+end
+
+tt=sum(money(:));  %目标函shu,默认求最小值
+
+%设定求解要求及参数通过sdpsetting设置
+ops = sdpsettings('solver', 'gurobi');%参数指定程序用cplex求解器，设定求解器gurobi
+% optimize(constraints,objective,ops);
+%%##################求解##########
+optimize(Constraints,tt,ops);  %求解   optimize(条件，目标函数)
+%optimize(Constraints,tt1,ops);  %求解   optimize(条件，目标函数)
+%%%%%%value(),查看变量%%%%
+P_mt=value(P_mt);
+P_b=value(P_b);
+P_ec=value(P_ec);
+P_ac=value(P_ac);
+P_ebuy=value(P_ebuy);
+P_esell=value(P_esell);
+flag_ebuy=value(flag_ebuy);
+flag_esell=value(flag_esell);
+P_bt_disc=value(P_bt_disc);
+P_bt_c=value(P_bt_c);
+P_tst_disc=value(P_tst_disc);
+P_tst_c=value(P_tst_c);
+W_bt=value(W_bt);
+W_tst=value(W_tst);
+U_gb_c=value(U_gb_c);
+U_bt_disc=value(U_bt_disc);
+U_bt_c=value(U_bt_c);
+U_bt_disc1=value(U_bt_disc1);
+U_bt_c1=value(U_bt_c1);
+U_tst_disc=value(U_tst_disc);
+U_tst_c=value(U_tst_c);
+Umt=value(Umt);
+C_ng=value(C_ng);
+C_om=value(C_om);
+C_bt=value(C_bt);
+C_tst=value(C_tst);
+tt=value(tt);
+%SOC=value(soc);
+A_various =[A_various;value(P_mt);value(P_ebuy);value(P_esell);value(P_ec);value(P_ac);];
+shuju=[value(P_ac);value(P_b);value(P_bt_c);value(P_bt_disc);value(P_ebuy);value(P_ec);value(P_esell);value(P_mt);value(P_tst_c);value(P_tst_disc);U_bt_c(:,1:24);U_bt_disc(:,1:24);U_tst_c(:,1:24);U_tst_disc(:,1:24);Umt] ; ...
+     xlswrite('日前结果.xls', shuju);%输出参数
+toc;
+x(1,:)=((P_mt(1,:)).*(1-r_mt-r_loss).*r_hr)./r_mt;
+C_bt(1,:)=(P_bt_c(1,:)+P_bt_disc(1,:)).*K_om_bt*t1;
+C_tst(1,:)=(P_tst_c(1,:)+P_tst_disc(1,:)).*K_om_tst*t1;
+C_ng(1,:)=(R_ng.*((P_mt(1,:))./r_mt+(P_b(1,:))./r_b)./H_ng)*t1;
+C_om(1,:)=((P_mt(1,:)).*K_om_mt+ x(1,:).*K_om_qmt+(P_b(1,:)).*K_om_b+Lh(1,:)/r_he.*K_om_he+(P_ac(1,:)).*K_om_ac+(P_ec(1,:)).*K_om_ec+ DA_PV(1,:).*K_om_pv)*t1+C_bt(1,:)+C_tst(1,:)+(U_bt_disc1(1,:)+U_bt_c1(1,:))*18;%
+C_g(1,:)=((P_ebuy(1,:)).*P(1,:)-(P_esell(1,:)).*S(1,:))*t1;
+E_om(1,:)=((P_ebuy(1,:))*889.1+((P_mt(1,:))/r_mt+(P_b(1,:))/r_b)*184.082)*t1*0.000033+((P_ebuy(1,:))*3.12+((P_mt(1,:))/r_mt+(P_b(1,:))/r_b)*0.0009)*0.007*tt1...
+                +((P_ebuy(1,:))*2.35+((P_mt(1,:))/r_mt+(P_b(1,:))/r_b)*0.619)*t1*0.009;
+money(1,:)=C_ng(1,:)+ C_om(1,:)+ C_g(1,:)+E_om(1,:);
+sum(money(:))
+T_C_ng= sum(C_ng)
+T_C_om= sum(C_om)
+T_C_g= sum(C_g)
+T_E_om= sum(E_om)
+T_Egrid=sum(P_ebuy+P_esell)
